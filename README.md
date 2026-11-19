@@ -31,13 +31,13 @@ Open the local URL displayed in the terminal (usually http://localhost:8501).
 1. Select **Admin** in the sidebar and sign in with your password.
 2. Set the shared token budget and destination minimum/maximum in **Shared voting rules**, then click **Save shared rules**. These apply to all existing and new entries.
 3. Add participants with private PINs (6+ characters), and add destinations by name.
-4. Optionally hide the leaderboard until voting ends.
+4. In **Voting controls**, choose whether participants may change their votes or submit only once. Optionally hide the leaderboard entirely; otherwise participants see the leaderboard and pie chart only after submitting their votes. Admins can always see results.
 5. Give each friend their name and PIN privately; they can sign in and allocate tokens.
-6. Each participant must allocate **exactly** their entire budget. For each destination, they can enter **0** or a number within the minimum–maximum range.
-7. Friends may update their votes until you close voting. Updating replaces their earlier allocations.
+6. Each participant must allocate **exactly** their entire budget. Every item must receive an allocation within the shared minimum and maximum limits.
+7. When **Allow participants to change their votes** is enabled, friends may update their votes until you close voting. Updating replaces their earlier allocations. When disabled, participants who have already submitted cannot vote again. Enable it again if participants need to correct votes after rule or destination changes.
 8. View the leaderboard; close voting before making final rule changes.
 
-Example: Everyone has 100 tokens, and every destination allows 0 or 10?60 tokens. Alice can vote Japan 50, Thailand 30, Vietnam 20.
+Example: Everyone has 100 tokens, and every destination requires between 10 and 60 tokens. Alice can vote Japan 50, Thailand 30, Vietnam 20.
 
 Existing trips initially use the first participant's budget and first destination's limits as the shared values. Review these in Admin settings. Existing votes are preserved; ask participants to resubmit if rule changes make their allocations invalid.
 
@@ -63,3 +63,15 @@ Existing trips initially use the first participant's budget and first destinatio
 ## Sharing with friends
 
 For a quick LAN test, run Streamlit on your computer and share the computer's LAN address only with trusted people on the same network (firewall rules may be needed). For friends connecting over the internet, the recommended next step is **Supabase/Postgres + hosted Streamlit + managed authentication**, not exposing the local development server to the public internet.
+
+## Reuse voting for dates, accommodation, or other choices
+
+In **Admin settings**, choose **User voting layout** and click **Save voting details**. Choose **Destination / item cards with allocation controls** or **Percentages with visual distribution bar**. Existing simple-form layouts automatically switch to the distribution bar; saved votes and rules are preserved. All layouts use the same token budget, per-item limits, and submission rules. Both layouts use token inputs in steps of 5 and show shared limits once. The distribution layout also shows percentage captions underneath. A taller colored bar shows item names above token counts, with complete names, tokens, and shares in the legend. Submission requires exactly 100% of the token budget.
+
+In Admin settings, set **Voting title** (for example, Holiday dates) and **Option label (singular)** (for example, Date range), then save voting details. Add named choices under **Voting options**, such as 10-15 January or Hotel A. Each choice uses the same token allocation rules.
+
+After a round is complete, close voting and save the controls. Under **Delete completed voting**, confirm deletion; optionally select **Also delete all voting options**. This permanently clears the round's votes, results, and submission locks while retaining participants, PINs, and rules. Voting stays closed. Configure the next round and reopen voting when ready. This app supports one active round at a time and does not archive deleted results.
+
+For card layouts, enter a direct **Card image URL** and an optional **Card click-through URL** when adding an item. Edit existing items under **Edit card details or delete an existing option**. Clicking a card image opens its click-through URL in a new tab, or the original image if no link is supplied. Leave the image URL blank to find a social preview image (Open Graph or Twitter), then a likely content image from the click-through page when saving. Logo, icon, and tiny-image candidates are skipped when choosing a content image; main/article images are preferred. Relative and common lazy-loaded image URLs are supported. Pages requiring sign-in, blocking previews, or loading images only through JavaScript may not provide an image; those cards keep a link button. You can always supply a direct image URL instead. Clear an existing image URL and save to discover an image again.
+
+Before adding or updating a card with URLs, click **Preview card image**. Likely logos, icons, and tiny images are filtered from social preview metadata as well as page images. The preview shows the image that will be saved; changing either URL requires another preview. To replace an old logo, clear **Card image URL**, preview again, then save. If no suitable image is found, you can save with a link button instead.

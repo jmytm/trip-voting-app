@@ -1,8 +1,10 @@
 """SQLite storage for a local/single-server prototype."""
 import os
 import sqlite3
+from urllib.parse import urlsplit
 from contextlib import contextmanager
 from pathlib import Path
+from card_images import discover_card_image
 
 DB_PATH = Path(os.environ.get("TRIP_DB_PATH", Path(__file__).parent / "trip_votes.db"))
 
@@ -40,11 +42,25 @@ def initialize():
             PRIMARY KEY(participant_id, destination_id)
         );
         CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS vote_submissions (
+            participant_id INTEGER PRIMARY KEY REFERENCES participants(id) ON DELETE CASCADE
+        );
+        INSERT OR IGNORE INTO vote_submissions SELECT DISTINCT participant_id FROM votes;
         INSERT OR IGNORE INTO settings VALUES ('voting_open','true');
         INSERT OR IGNORE INTO settings VALUES ('show_results','true');
+        INSERT OR IGNORE INTO settings VALUES ('allow_vote_changes','true');
+        INSERT OR IGNORE INTO settings VALUES ('poll_title','Group Voting');
+        INSERT OR IGNORE INTO settings VALUES ('option_label','Option');
+        INSERT OR IGNORE INTO settings VALUES ('round_id','1');
+        INSERT OR IGNORE INTO settings VALUES ('voting_layout','percentages');
         """)
         # Migrate existing trips using the first entry's values as shared rules.
         db.execute("BEGIN IMMEDIATE")
+        db.execute("UPDATE settings SET value='percentages' WHERE key='voting_layout' AND value='simple'")
+        columns = {r['name'] for r in db.execute("PRAGMA table_info(destinations)")}
+        for column in ('image_url', 'link_url'):
+            if column not in columns:
+                db.execute(f"ALTER TABLE destinations ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
         db.execute("""INSERT OR IGNORE INTO settings VALUES
                    ('shared_budget', COALESCE((SELECT budget FROM participants ORDER BY id LIMIT 1),100))""")
         db.execute("""INSERT OR IGNORE INTO settings VALUES
@@ -83,3 +99,56 @@ def setting(key):
 def set_setting(key, value):
     with connect() as db:
         db.execute("UPDATE settings SET value=? WHERE key=?", ("true" if value else "false", key))
+
+
+def poll_details():
+    details = {'voting_layout': 'percentages'}
+    details.update({r['key']: r['value'] for r in rows(
+        "SELECT key,value FROM settings WHERE key IN ('poll_title','option_label','round_id','voting_layout')")})
+    return details
+
+
+def validate_card_urls(image_url, link_url):
+    for label, value in (("Image URL", image_url), ("Click-through URL", link_url)):
+        if not value.strip():
+            continue
+        try:
+            parsed = urlsplit(value.strip())
+            valid = parsed.scheme in ('http', 'https') and bool(parsed.hostname)
+        except ValueError:
+            valid = False
+        if not valid:
+            raise ValueError(f"{label} must be a full http:// or https:// URL.")
+
+
+def save_card_details(option_id, image_url, link_url, auto_discover=True):
+    validate_card_urls(image_url, link_url)
+    image_url = image_url.strip()
+    if not image_url and auto_discover:
+        image_url = discover_card_image(link_url.strip())
+    with connect() as db:
+        db.execute("UPDATE destinations SET image_url=?,link_url=? WHERE id=?",
+                   (image_url.strip(), link_url.strip(), option_id))
+
+
+def save_poll_details(title, label, layout='percentages'):
+    if not title.strip() or not label.strip():
+        raise ValueError("Enter a voting title and an option label.")
+    if layout not in ('cards', 'percentages'):
+        raise ValueError("Choose a supported voting layout.")
+    with connect() as db:
+        db.executemany("INSERT INTO settings(value,key) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [
+            (title.strip(), 'poll_title'), (label.strip(), 'option_label'),
+            (layout, 'voting_layout')])
+
+
+def clear_completed_voting(delete_options=False):
+    with connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        if db.execute("SELECT value FROM settings WHERE key='voting_open'").fetchone()[0] == 'true':
+            raise ValueError("Close voting before deleting completed votes.")
+        db.execute("DELETE FROM votes")
+        db.execute("DELETE FROM vote_submissions")
+        if delete_options:
+            db.execute("DELETE FROM destinations")
+        db.execute("UPDATE settings SET value=CAST(value AS INTEGER)+1 WHERE key='round_id'")
