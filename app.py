@@ -428,6 +428,8 @@ if st.session_state.role == "friend":
         problem = validate(allocation, person["budget"], destinations)
         if problem:
             st.warning(problem)
+        if not setting("allow_vote_changes"):
+            st.warning("You can vote only once. After you submit, you will not be able to change your vote. Please review your allocations before submitting.")
         if st.button("Update my votes" if voted else "Submit my votes", disabled=bool(problem)):
             try:
                 save_votes(pid, allocation, poll["round_id"])
