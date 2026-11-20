@@ -54,6 +54,7 @@ def initialize():
         INSERT OR IGNORE INTO settings VALUES ('round_id','1');
         INSERT OR IGNORE INTO settings VALUES ('voting_layout','percentages');
         INSERT OR IGNORE INTO settings VALUES ('vote_step','5');
+        INSERT OR IGNORE INTO settings VALUES ('voting_instructions','');
         """)
         # Migrate existing trips using the first entry's values as shared rules.
         db.execute("BEGIN IMMEDIATE")
@@ -107,9 +108,9 @@ def set_setting(key, value):
 
 
 def poll_details():
-    details = {'voting_layout': 'percentages'}
+    details = {'voting_layout': 'percentages', 'voting_instructions': ''}
     details.update({r['key']: r['value'] for r in rows(
-        "SELECT key,value FROM settings WHERE key IN ('poll_title','option_label','round_id','voting_layout')")})
+        "SELECT key,value FROM settings WHERE key IN ('poll_title','option_label','round_id','voting_layout','voting_instructions')")})
     return details
 
 
@@ -136,7 +137,7 @@ def save_card_details(option_id, image_url, link_url, auto_discover=True):
                    (image_url.strip(), link_url.strip(), option_id))
 
 
-def save_poll_details(title, label, layout='percentages'):
+def save_poll_details(title, label, layout='percentages', instructions=None):
     if not title.strip() or not label.strip():
         raise ValueError("Enter a voting title and an option label.")
     if layout not in ('cards', 'percentages'):
@@ -145,6 +146,23 @@ def save_poll_details(title, label, layout='percentages'):
         db.executemany("INSERT INTO settings(value,key) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [
             (title.strip(), 'poll_title'), (label.strip(), 'option_label'),
             (layout, 'voting_layout')])
+        if instructions is not None:
+            db.execute("INSERT INTO settings(key,value) VALUES ('voting_instructions',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (instructions.strip(),))
+
+
+def leaderboard():
+    """Average across submitted participants, including their zero allocations."""
+    with connect() as db:
+        db.execute("BEGIN")
+        submitted = db.execute("SELECT COUNT(*) FROM vote_submissions").fetchone()[0]
+        ranking = [dict(r) for r in db.execute("""
+            SELECT d.name AS item,
+                   COALESCE(SUM(v.tokens),0) * 1.0 / MAX(?,1) AS average_tokens,
+                   COUNT(CASE WHEN v.tokens > 0 THEN 1 END) AS supporters
+            FROM destinations d LEFT JOIN votes v ON d.id=v.destination_id
+            GROUP BY d.id ORDER BY average_tokens DESC, supporters DESC, d.name
+        """, (submitted,))]
+    return ranking, submitted
 
 
 def clear_completed_voting(delete_options=False):

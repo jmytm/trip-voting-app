@@ -8,7 +8,6 @@ import secrets
 import sqlite3
 import streamlit as st
 import pandas as pd
-import altair as alt
 import card_images as image_discovery
 import db as storage
 import visuals
@@ -17,7 +16,7 @@ import visuals
 importlib.reload(image_discovery)
 importlib.reload(storage)
 importlib.reload(visuals)
-from db import initialize, connect, rows, setting, set_setting, shared_rules, save_shared_rules, poll_details, save_poll_details, clear_completed_voting, validate_card_urls, save_card_details
+from db import initialize, connect, rows, setting, set_setting, shared_rules, save_shared_rules, poll_details, save_poll_details, clear_completed_voting, validate_card_urls, save_card_details, leaderboard
 
 st.set_page_config(page_title="Group Voting", page_icon="🌏", layout="wide")
 st.markdown("""<style>
@@ -189,13 +188,15 @@ if st.session_state.role == "admin":
     with st.form("poll_details"):
         title = st.text_input("Voting title", value=poll["poll_title"], help="For example: Holiday dates or Accommodation choice")
         label = st.text_input("Option label (singular)", value=option_label, help="For example: Destination, Date range, or Accommodation")
+        instructions = st.text_area("Voting instructions (optional)", value=poll.get("voting_instructions", ""),
+                                    help="Explain what tokens represent. For example: Each token represents one night; distribute the nights across the locations.")
         layouts = {"cards": "Destination / item cards with allocation controls", "percentages": "Percentages with visual distribution bar"}
         layout = st.selectbox("User voting layout", options=list(layouts),
                               index=list(layouts).index(poll["voting_layout"]),
                               format_func=layouts.get)
         if st.form_submit_button("Save voting details"):
             try:
-                save_poll_details(title, label, layout)
+                save_poll_details(title, label, layout, instructions)
                 st.rerun()
             except ValueError as exc:
                 st.error(str(exc))
@@ -326,7 +327,7 @@ if st.session_state.role == "admin":
     with t_control:
         open_now = st.toggle("Voting open", value=setting("voting_open"))
         show_now = st.toggle("Show leaderboard to participants", value=setting("show_results"))
-        st.caption("Participants can see the leaderboard and pie chart only after submitting their votes.")
+        st.caption("Participants can see the leaderboard and results bar only after submitting their votes.")
         allow_changes = st.toggle("Allow participants to change their votes", value=setting("allow_vote_changes"))
         st.caption("When disabled, each participant can submit only once. Enable this again to allow corrections after rule or option changes.")
         if st.button("Save voting controls"):
@@ -361,6 +362,9 @@ if st.session_state.role == "friend":
     voted = has_voted(pid)
     destinations = get_destinations()
     st.subheader(f"🗳️ Vote — {person['name']}")
+    st.write(f"**Voting for:** {option_label}")
+    if poll.get("voting_instructions"):
+        st.write(poll["voting_instructions"])
     st.metric("Your token budget", person["budget"])
     if not destinations:
         st.info("No voting options have been added yet.")
@@ -410,37 +414,12 @@ if st.session_state.role == "friend":
             if remaining:
                 distribution.append({"item": "Unallocated", "tokens": remaining,
                                      "percentage": remaining / person["budget"]})
-            offset = 0.0
-            for index, segment in enumerate(distribution):
-                segment["start"] = offset
-                offset += segment["percentage"]
-                segment["end"] = offset
-                segment["midpoint"] = (segment["start"] + segment["end"]) / 2
-                segment["label"] = str(segment["tokens"])
-                segment["show_label"] = segment["percentage"] / max(1, sum(allocation.values()) / person["budget"]) >= max(0.035, len(segment["label"]) * 0.009)
             colors = visuals.item_colors([d["name"] for d in destinations])
             if remaining:
                 colors["Unallocated"] = visuals.UNALLOCATED
-            chart_data = pd.DataFrame(distribution)
-            base = alt.Chart(chart_data)
-            scale = alt.Scale(domain=[0, max(1, offset)])
-            hover_details = [alt.Tooltip("item:N", title="Item"),
-                             alt.Tooltip("tokens:Q", title="Tokens"),
-                             alt.Tooltip("percentage:Q", title="Percentage", format=".2%")]
-            bar = base.mark_bar(stroke="#FAFAF9", strokeWidth=2).encode(
-                x=alt.X("start:Q", title=None, axis=None, scale=scale),
-                x2="end:Q", color=alt.Color("item:N", title="Item", scale=visuals.color_scale(colors), legend=None),
-                tooltip=hover_details)
-            label_data = base.transform_filter(alt.datum.show_label)
-            names = label_data.mark_text(
-                color="white", fontWeight="bold", fontSize=12, dy=-11,
-                limit=alt.ExprRef(expr=f"max(0, (datum.end - datum.start) / {max(1, offset)} * width - 10)")
-            ).encode(x=alt.X("midpoint:Q", scale=scale), text="item:N", tooltip=hover_details)
-            counts = label_data.mark_text(color="white", fontWeight="bold", fontSize=13, dy=12).encode(
-                x=alt.X("midpoint:Q", scale=scale), text="label:N", tooltip=hover_details)
             with distribution_view.container():
                 st.write(f"**Allocated: {100 * sum(allocation.values()) / person['budget']:.1f}% / 100%**")
-                st.altair_chart(visuals.chart_style((bar + names + counts).properties(height=104)), use_container_width=True, theme=None)
+                st.altair_chart(visuals.distribution_chart(distribution, colors), use_container_width=True, theme=None)
                 st.markdown(visuals.distribution_legend(distribution, colors), unsafe_allow_html=True)
                 st.caption("Each segment shows the item name above its token count. Full names and counts for narrow segments are listed below.")
         total = sum(allocation.values())
@@ -457,33 +436,26 @@ if st.session_state.role == "friend":
                 st.error(str(exc))
 
 if st.session_state.role == "friend" and setting("show_results") and not has_voted(st.session_state.participant_id):
-    st.info("Submit your votes to see the leaderboard and pie chart.")
+    st.info("Submit your votes to see the leaderboard and results bar.")
 
 if st.session_state.role == "admin" or (st.session_state.role == "friend" and setting("show_results") and has_voted(st.session_state.participant_id)):
     st.subheader(f"{poll['poll_title']} results")
-    ranking = rows("""
-        SELECT d.name AS item, COALESCE(SUM(v.tokens),0) AS total,
-               COUNT(CASE WHEN v.tokens > 0 THEN 1 END) AS supporters
-        FROM destinations d LEFT JOIN votes v ON d.id=v.destination_id
-        GROUP BY d.id ORDER BY total DESC, supporters DESC, d.name
-    """)
+    ranking, submitted = leaderboard()
     if ranking:
-        st.dataframe(pd.DataFrame(ranking), hide_index=True, use_container_width=True)
-        if sum(d["total"] for d in ranking) > 0:
-            chart_data = pd.DataFrame(ranking)
-            chart_data["share"] = chart_data["total"] / chart_data["total"].sum()
+        st.caption(f"Average tokens per person who has voted ({submitted} submitted). People who have not voted are excluded.")
+        st.dataframe(pd.DataFrame(ranking), hide_index=True, use_container_width=True,
+                     column_config={"average_tokens": st.column_config.NumberColumn("average tokens", format="%.1f")})
+        average_total = sum(d["average_tokens"] for d in ranking)
+        if average_total > 0:
+            distribution = [{"item": d["item"], "tokens": d["average_tokens"],
+                             "percentage": d["average_tokens"] / average_total} for d in ranking]
             colors = visuals.item_colors([d["name"] for d in get_destinations()])
-            pie = alt.Chart(chart_data).mark_arc(stroke="#FAFAF9", strokeWidth=2).encode(
-                theta=alt.Theta("total:Q", stack=True, title="Total"),
-                color=alt.Color("item:N", title="Item",
-                                scale=visuals.color_scale(colors)),
-                tooltip=[alt.Tooltip("item:N", title="Item"),
-                         alt.Tooltip("total:Q", title="Total"),
-                         alt.Tooltip("share:Q", title="Share", format=".1%")],
-            )
-            st.altair_chart(visuals.chart_style(pie).properties(height=280), use_container_width=True, theme=None)
+            st.altair_chart(visuals.distribution_chart(distribution, colors, "Average tokens", ".1f"),
+                            use_container_width=True, theme=None)
+            st.markdown(visuals.distribution_legend(distribution, colors, "avg tokens", ".1f"), unsafe_allow_html=True)
+            st.caption("Each segment shows the item name above its average tokens. Percentages show each item's share of the group allocation.")
         else:
-            st.info("The pie chart will appear once participants allocate tokens.")
+            st.info("The results bar will appear once participants allocate tokens.")
         if st.button("Refresh leaderboard"):
             st.rerun()
     else:
