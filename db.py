@@ -53,6 +53,7 @@ def initialize():
         INSERT OR IGNORE INTO settings VALUES ('option_label','Option');
         INSERT OR IGNORE INTO settings VALUES ('round_id','1');
         INSERT OR IGNORE INTO settings VALUES ('voting_layout','percentages');
+        INSERT OR IGNORE INTO settings VALUES ('vote_step','5');
         """)
         # Migrate existing trips using the first entry's values as shared rules.
         db.execute("BEGIN IMMEDIATE")
@@ -75,18 +76,22 @@ def initialize():
 
 def shared_rules():
     return {r['key']: int(r['value']) for r in rows(
-        "SELECT key,value FROM settings WHERE key IN ('shared_budget','shared_minimum','shared_maximum')")}
+        "SELECT key,value FROM settings WHERE key IN ('shared_budget','shared_minimum','shared_maximum','vote_step')")}
 
 
-def save_shared_rules(budget, minimum, maximum):
+def save_shared_rules(budget, minimum, maximum, vote_step=None):
     if budget < 0 or minimum < 0 or maximum < minimum:
         raise ValueError("Use nonnegative values and ensure minimum does not exceed maximum.")
+    if vote_step is not None and (type(vote_step) is not int or vote_step < 1):
+        raise ValueError("The plus/minus token step must be a whole number of at least 1.")
     with connect() as db:
         db.executemany("UPDATE settings SET value=? WHERE key=?", [
             (str(budget), 'shared_budget'), (str(minimum), 'shared_minimum'),
             (str(maximum), 'shared_maximum')])
         db.execute("UPDATE participants SET budget=?", (budget,))
         db.execute("UPDATE destinations SET min_tokens=?,max_tokens=?", (minimum, maximum))
+        if vote_step is not None:
+            db.execute("INSERT INTO settings(key,value) VALUES ('vote_step',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(vote_step),))
 
 def rows(sql, params=()):
     with connect() as db:

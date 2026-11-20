@@ -206,9 +206,11 @@ if st.session_state.role == "admin":
         budget = st.number_input("Token budget for every participant", min_value=0, value=rules["shared_budget"], step=5)
         minimum = st.number_input("Minimum tokens for every option", min_value=0, value=rules["shared_minimum"], step=5)
         maximum = st.number_input("Maximum tokens for every option", min_value=0, value=rules["shared_maximum"], step=5)
+        vote_step = st.number_input("Tokens per plus/minus click", min_value=1, value=rules.get("vote_step", 5), step=1,
+                                    help="Applies to participant inputs in both voting layouts. Participants can still type exact amounts within the limits.")
         if st.form_submit_button("Save shared rules"):
             try:
-                save_shared_rules(int(budget), int(minimum), int(maximum))
+                save_shared_rules(int(budget), int(minimum), int(maximum), int(vote_step))
                 st.rerun()
             except ValueError as exc:
                 st.error(str(exc))
@@ -369,10 +371,11 @@ if st.session_state.role == "friend":
     else:
         existing = {v["destination_id"]: v["tokens"] for v in rows("SELECT destination_id,tokens FROM votes WHERE participant_id=?", (pid,))}
         layout = poll["voting_layout"]
+        vote_step = shared_rules().get("vote_step", 5)
         if layout == "percentages":
-            st.caption("Allocate tokens to every option within the admin's limits. The bar and percentages below update to show your distribution. Use the plus and minus buttons for steps of 5, or type an exact amount.")
+            st.caption(f"Allocate tokens to every option within the admin's limits. The bar and percentages below update to show your distribution. Use the plus and minus buttons for steps of {vote_step}, or type an exact amount.")
         else:
-            st.caption("Allocate tokens to every option within the limits set by the admin. Use the plus and minus buttons for steps of 5, or type an exact amount and press Enter or click outside the field to update the total.")
+            st.caption(f"Allocate tokens to every option within the limits set by the admin. Use the plus and minus buttons for steps of {vote_step}, or type an exact amount and press Enter or click outside the field to update the total.")
         st.caption(f"For every item: minimum {destinations[0]['min_tokens']}, maximum {destinations[0]['max_tokens']} tokens.")
         allocation = {}
         distribution_view = st.empty() if layout == "percentages" else None
@@ -395,7 +398,7 @@ if st.session_state.role == "friend":
                 allocation[d["id"]] = st.number_input(
                     d["name"],
                     min_value=d["min_tokens"], max_value=d["max_tokens"],
-                    value=default, step=5, key=key)
+                    value=default, step=vote_step, key=key)
                 if layout == "percentages":
                     percentage = 100 * allocation[d["id"]] / person["budget"] if person["budget"] else 0
                     st.caption(f"{percentage:.2f}% of your token budget")
